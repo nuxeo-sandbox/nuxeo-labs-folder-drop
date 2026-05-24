@@ -45,7 +45,7 @@ Click **Upload** to start the import. The dialog shows progress through each pha
 
 Each completed phase shows a checkmark.
 
-<img src="README-Images/03-UploadRunning.png" alt="Upload Running" width="500">
+<img src="README-Images/03-UploadRunning.png" alt="Upload Running" width="700">
 
 ### 4. Done
 
