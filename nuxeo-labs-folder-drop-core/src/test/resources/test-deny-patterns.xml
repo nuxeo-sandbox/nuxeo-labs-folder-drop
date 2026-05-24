@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.test.denypatterns">
+
+  <require>nuxeo.labs.folderdrop.FolderDropService</require>
+
+  <!-- Configure deny patterns: deny video/* and application/x-executable -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <mimeTypeDenyPatterns>video/.*,application/x-executable</mimeTypeDenyPatterns>
+      <filterHiddenFiles>true</filterHiddenFiles>
+    </configuration>
+  </extension>
+
+</component>

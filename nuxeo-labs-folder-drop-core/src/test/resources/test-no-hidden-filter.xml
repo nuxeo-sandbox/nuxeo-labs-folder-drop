@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.test.nohiddenfilter">
+
+  <require>nuxeo.labs.folderdrop.FolderDropService</require>
+
+  <!-- Disable hidden file filtering -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <filterHiddenFiles>false</filterHiddenFiles>
+    </configuration>
+  </extension>
+
+</component>

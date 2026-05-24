@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.test.callback.error">
+
+  <require>nuxeo.labs.folderdrop.FolderDropService</require>
+
+  <!-- Override default config to set a callback chain that throws -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <callbackChain>javascript.testFolderDropCallbackError</callbackChain>
+    </configuration>
+  </extension>
+
+  <!-- Test chain: always throws an error -->
+  <extension target="org.nuxeo.automation.scripting.internals.AutomationScriptingComponent" point="operation">
+    <scriptedOperation id="javascript.testFolderDropCallbackError">
+      <inputType>document</inputType>
+      <outputType>document</outputType>
+      <category>javascript</category>
+      <param name="name" type="string"/>
+      <param name="is_folder" type="boolean"/>
+      <param name="mime_type" type="string"/>
+      <param name="size" type="long"/>
+      <param name="relative_path" type="string"/>
+      <description>Test callback chain that always throws an error</description>
+      <script><![CDATA[function run(input, params) {
+        throw new Error("Custom validation error: cannot import " + params.name);
+      }]]></script>
+    </scriptedOperation>
+  </extension>
+
+</component>

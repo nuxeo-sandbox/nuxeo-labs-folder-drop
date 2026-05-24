@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<component name="nuxeo.labs.folderdrop.operations">
+
+  <extension point="operations" target="org.nuxeo.ecm.core.operation.OperationServiceComponent">
+    <operation class="nuxeo.labs.folderdrop.FolderDropResolveTypesOp"/>
+    <operation class="nuxeo.labs.folderdrop.FolderDropNotifyDoneOp"/>
+    <operation class="nuxeo.labs.folderdrop.FolderDropRollbackImportOp"/>
+  </extension>
+
+</component>

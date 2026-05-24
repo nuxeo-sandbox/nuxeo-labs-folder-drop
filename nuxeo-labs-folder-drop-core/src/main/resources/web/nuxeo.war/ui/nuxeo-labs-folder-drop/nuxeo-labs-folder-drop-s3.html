@@ -1,0 +1,592 @@
+<!--
+(C) Copyright 2025 Hyland (http://hyland.com/) and others.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Contributors:
+    Thibaud Arguillere
+-->
+
+<link rel="import" href="nuxeo-labs-folder-drop-common.html">
+<link rel="import" href="nuxeo-labs-folder-drop-styles.html">
+
+<!--
+  S3 Direct Upload variant.
+  Uses Nuxeo.UploaderBehavior so the S3 upload provider is selected
+  automatically when S3 direct upload is configured on the server.
+
+  By default this element is NOT displayed (display property is false).
+  To activate it, add the "display" attribute in the slot contribution:
+    <nuxeo-labs-folder-drop-s3 document="[[document]]" display></nuxeo-labs-folder-drop-s3>
+  and remove the "display" attribute from the default element.
+-->
+<dom-module id="nuxeo-labs-folder-drop-s3">
+  <template>
+    <style include="nuxeo-styles nuxeo-action-button-styles nuxeo-labs-folder-drop-styles">
+      /* S3-specific styles for in-flight file list */
+      .in-flight-list {
+        max-height: 150px;
+        overflow-y: auto;
+        border: 1px solid var(--nuxeo-border, #e3e3e3);
+        border-radius: 4px;
+        padding: 4px 8px;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+
+      .in-flight-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 0;
+      }
+
+      .in-flight-item .file-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .in-flight-item .file-size {
+        color: var(--nuxeo-text-light, #939caa);
+        white-space: nowrap;
+      }
+
+      .in-flight-item paper-progress {
+        width: 80px;
+        flex-shrink: 0;
+      }
+
+      .in-flight-item .pct {
+        width: 36px;
+        text-align: right;
+        white-space: nowrap;
+        color: var(--nuxeo-text-light, #939caa);
+      }
+    </style>
+
+    <nuxeo-connection id="nx"></nuxeo-connection>
+    <nuxeo-operation id="resolveTypesOp" op="FolderDrop.ResolveTypes"></nuxeo-operation>
+    <nuxeo-operation id="notifyDoneOp" op="FolderDrop.NotifyDone"></nuxeo-operation>
+    <nuxeo-operation id="rollbackImportOp" op="FolderDrop.RollbackImport"></nuxeo-operation>
+
+    <!-- The action button -->
+    <template is="dom-if" if="[[display]]">
+      <paper-icon-button id="dropFolderBtn" icon="icons:folder" on-tap="_openDialog" noink></paper-icon-button>
+      <span class="label" hidden$="[[!showLabel]]">[[i18n('folderDrop.action.tooltip')]]</span>
+      <nuxeo-tooltip for="dropFolderBtn">[[i18n('folderDrop.action.tooltip')]]</nuxeo-tooltip>
+    </template>
+
+    <!-- The dialog -->
+    <nuxeo-dialog id="dialog" with-backdrop no-auto-focus modal>
+      <h2>[[i18n('folderDrop.dialog.title')]]</h2>
+
+      <!-- Drop zone (visible before upload starts and config is valid) -->
+      <template is="dom-if" if="[[_showDropZone(_uploading, _configValid)]]">
+        <div id="dropZone"
+             on-dragover="_onDragOver"
+             on-dragleave="_onDragLeave"
+             on-drop="_onDrop">
+          <iron-icon icon="icons:cloud-upload"></iron-icon>
+          <div class="drop-label">[[i18n('folderDrop.dialog.dropLabel')]]</div>
+        </div>
+      </template>
+
+      <!-- Tree preview (after drop) -->
+      <template is="dom-if" if="[[_hasTree]]">
+        <div class="summary">
+          [[_treeSummary]]
+        </div>
+        <div class="tree-preview">
+          <template is="dom-repeat" items="[[_treeLines]]" as="line">
+            <div class="tree-line" style$="padding-left: [[_indent(line.depth)]]px;">
+              <template is="dom-if" if="[[_showChevron(line)]]">
+                <iron-icon class="tree-chevron"
+                           icon$="[[_chevronIcon(line.relativePath, _collapsedPaths)]]"
+                           on-tap="_onToggleFolder"></iron-icon>
+              </template>
+              <template is="dom-if" if="[[!_showChevron(line)]]">
+                <span class="tree-chevron-spacer"></span>
+              </template>
+              <iron-icon icon$="[[_lineIcon(line.isFolder)]]"></iron-icon>
+              <template is="dom-if" if="[[line.isDuplicate]]">
+                <san id="[[_duplicateLineId(line)]]">⚠️</san>
+                <nuxeo-tooltip for="[[_duplicateLineId(line)]]">[[i18n('folderDrop.warning.oneDuplicate')]]</nuxeo-tooltip>
+              </template>
+              <span class="tree-line-name" style="[[_lineNameStyle(line.isDuplicate)]]">[[line.name]]</span>
+              <template is="dom-if" if="[[!line.isFolder]]">
+                <span class="tree-line-size">[[line.sizeLabel]]</span>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Warning message (e.g., duplicate items) -->
+      <template is="dom-if" if="[[_warningMessage]]">
+        <div class="warning-message">
+          <div>⚠️&nbsp;[[_warningMessage]]</div>
+          <div>[[i18n('folderDrop.warning.duplicates.hint')]]</div>
+        </div>
+        <hr>
+      </template>
+
+      <!-- Phase: Upload files -->
+      <template is="dom-if" if="[[_showUploadProgress]]">
+        <div class="progress-section">
+          <div class="progress-label">[[_uploadProgressLabel]]</div>
+          <paper-progress value="[[_uploadProgressValue]]" max="[[_uploadProgressMax]]"></paper-progress>
+          <!-- In-flight files list (S3 parallel mode) -->
+          <template is="dom-if" if="[[_hasInFlightFiles]]">
+            <div class="in-flight-list">
+              <template is="dom-repeat" items="[[_inFlightFiles]]" as="inf">
+                <div class="in-flight-item">
+                  <span class="file-name">[[inf.name]]</span>
+                  <span class="file-size">[[inf.sizeLabel]]</span>
+                  <paper-progress value="[[inf.pct]]" max="100"></paper-progress>
+                  <span class="pct">[[inf.pct]]%</span>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Phase: Upload complete checkmark -->
+      <template is="dom-if" if="[[_uploadDone]]">
+        <div class="phase-completed">
+          <iron-icon icon="icons:check"></iron-icon>[[i18n('folderDrop.phase.uploadDone')]]
+        </div>
+      </template>
+
+      <!-- Phase: Resolving types (only with callback chain) -->
+      <template is="dom-if" if="[[_showResolvingProgress]]">
+        <div class="progress-section">
+          <div class="progress-label">[[i18n('folderDrop.progress.resolving')]]</div>
+          <paper-progress indeterminate></paper-progress>
+        </div>
+      </template>
+
+      <!-- Phase: Resolving complete checkmark -->
+      <template is="dom-if" if="[[_resolvingDone]]">
+        <div class="phase-completed">
+          <iron-icon icon="icons:check"></iron-icon>[[i18n('folderDrop.phase.resolvingDone')]]
+        </div>
+      </template>
+
+      <!-- Phase: Creating documents -->
+      <template is="dom-if" if="[[_showImportProgress]]">
+        <div class="progress-section">
+          <div class="progress-label">[[_importProgressLabel]]</div>
+          <div class="progress-item-info">[[_currentItemInfo]]</div>
+          <paper-progress value="[[_importProgressValue]]" max="[[_importProgressMax]]"></paper-progress>
+        </div>
+      </template>
+
+      <!-- Error message -->
+      <template is="dom-if" if="[[_errorMessage]]">
+        <div class="error-message">[[_errorMessage]]</div>
+      </template>
+
+      <!-- Success message -->
+      <template is="dom-if" if="[[_successMessage]]">
+        <div class="success-message">[[_successMessage]]</div>
+      </template>
+
+      <!-- "Stopping after current item..." hint -->
+      <template is="dom-if" if="[[_showStoppingHint]]">
+        <div class="progress-label current-file-label">[[i18n('folderDrop.dialog.stopping')]]</div>
+      </template>
+
+      <!-- Buttons -->
+      <div class="buttons">
+        <!-- Cancel / Close -->
+        <paper-button on-tap="_close" disabled="[[_uploading]]">
+          [[_closeButtonLabel]]
+        </paper-button>
+
+        <!-- Stop upload (visible only while uploading) -->
+        <template is="dom-if" if="[[_showStopButton(_uploading, _stopRequested)]]">
+          <paper-button on-tap="_onStopClicked" disabled="[[_stopRequested]]">
+            [[i18n('folderDrop.dialog.stopUpload')]]
+          </paper-button>
+        </template>
+
+        <!-- Upload button -->
+        <paper-button class="primary" on-tap="_startUpload" disabled="[[!_canUpload]]" hidden="[[!_hasTree]]">
+          [[i18n('folderDrop.dialog.upload')]]
+        </paper-button>
+      </div>
+    </nuxeo-dialog>
+
+    <!-- Stop confirmation modal -->
+    <nuxeo-dialog id="stopConfirmDialog" opened="[[_showStopConfirm]]" with-backdrop modal>
+      <div>
+        <h2>[[i18n('folderDrop.dialog.confirmStop.title')]]</h2>
+        <template is="dom-if" if="[[!_rollingBack]]">
+          <div>[[_stopConfirmBody(_createdCount)]]</div>
+          <div class="stop-confirm-buttons">
+            <paper-button on-tap="_onConfirmStopResume" autofocus>
+              [[i18n('folderDrop.dialog.confirmStop.resume')]]
+            </paper-button>
+            <paper-button class="secondary" on-tap="_onConfirmStopKeep">
+              [[_stopKeepLabel(_createdCount)]]
+            </paper-button>
+            <template is="dom-if" if="[[_canRollback(_createdCount)]]">
+              <paper-button class="secondary" on-tap="_onConfirmStopDelete">
+                [[i18n('folderDrop.dialog.confirmStop.stopDelete')]]
+              </paper-button>
+            </template>
+          </div>
+        </template>
+        <template is="dom-if" if="[[_rollingBack]]">
+          <div>[[i18n('folderDrop.dialog.confirmStop.deleting')]]</div>
+          <paper-progress indeterminate class="stop-confirm-progress"></paper-progress>
+        </template>
+      </div>
+    </nuxeo-dialog>
+  </template>
+
+  <script>
+    Polymer({
+      is: 'nuxeo-labs-folder-drop-s3',
+
+      behaviors: [Nuxeo.FormatBehavior, Nuxeo.UploaderBehavior, FolderDropCommonBehavior],
+
+      properties: {
+        /** In-flight file entries for S3 parallel upload progress */
+        _inFlightFiles: {
+          type: Array,
+          value: function() { return []; }
+        },
+
+        /** Whether we have in-flight files to show */
+        _hasInFlightFiles: {
+          type: Boolean,
+          value: false
+        },
+
+        /** Total bytes to upload (for aggregate progress) */
+        _totalBytes: {
+          type: Number,
+          value: 0
+        },
+
+        /** Bytes uploaded so far (for aggregate progress) */
+        _uploadedBytes: {
+          type: Number,
+          value: 0
+        }
+      },
+
+      attached: function() {
+        // UploaderBehavior requires a connection reference
+        this.connection = this.$.nx;
+      },
+
+      /**
+       * Reset upload-specific state.
+       * Called by FolderDropCommonBehavior._reset().
+       */
+      _resetUploader: function() {
+        this._inFlightFiles = [];
+        this._hasInFlightFiles = false;
+        this._totalBytes = 0;
+        this._uploadedBytes = 0;
+        this._uploadCompletedCount = 0;
+        this._perFileLoaded = [];
+        this._stopAdvisoryLogged = false;
+        // Cancel any existing batch from UploaderBehavior
+        if (this._instance) {
+          try { this.cancelBatch(); } catch (e) { /* ignore */ }
+        }
+      },
+
+      /**
+       * Hard-cancel any in-flight S3 batch and reject the upload promise so the
+       * main chain in FolderDropCommonBehavior catches the STOP sentinel.
+       * Called by the two _onConfirmStop* overrides below.
+       */
+      _hardCancelS3Upload: function() {
+        if (!this._uploadReject) {
+          // Upload phase already finished; nothing to cancel here. The common
+          // behavior's _awaitResume() will reject the next per-item step.
+          return;
+        }
+        try {
+          this.cancelBatch();
+        } catch (e) {
+          console.warn('[nuxeo-labs-folder-drop-s3] cancelBatch() failed:', e);
+        }
+        var reject = this._uploadReject;
+        this._uploadResolve = null;
+        this._uploadReject = null;
+        this._hasInFlightFiles = false;
+        this._inFlightFiles = [];
+        reject(new Error(this._STOP_SENTINEL));
+      },
+
+      /**
+       * Override the common Stop-and-Keep handler so we also hard-cancel the
+       * in-flight S3 batch when stop is confirmed during the upload phase.
+       */
+      _onConfirmStopKeep: function() {
+        this._showStopConfirm = false;
+        this._stopShouldRollback = false;
+        var reject = this._stopReject;
+        this._stopResolve = null;
+        this._stopReject = null;
+        if (reject) {
+          reject(new Error(this._STOP_SENTINEL));
+        } else {
+          // No per-item await is pending => we're inside the parallel S3 upload phase.
+          this._hardCancelS3Upload();
+        }
+      },
+
+      /**
+       * Override the common Stop-and-Delete handler — same as above, plus the
+       * common .catch() runs the rollback.
+       */
+      _onConfirmStopDelete: function() {
+        this._showStopConfirm = false;
+        this._stopShouldRollback = true;
+        var reject = this._stopReject;
+        this._stopResolve = null;
+        this._stopReject = null;
+        if (reject) {
+          reject(new Error(this._STOP_SENTINEL));
+        } else {
+          this._hardCancelS3Upload();
+        }
+      },
+
+      /**
+       * Uploads all files using UploaderBehavior (which delegates to S3 provider).
+       * Returns a Promise that resolves with the batchId.
+       *
+       * UploaderBehavior fires these events via callback:
+       *   batchStart    -> { batchId }
+       *   uploadStarted -> { file }           (per file)
+       *   uploadProgress -> { fileIdx, progress }  (per file, S3 only)
+       *   uploadCompleted -> { fileIdx }      (per file)
+       *   batchFinished -> { batchId }        (all done)
+       *   batchFailed   -> { error, batchId } (failure)
+       *   uploadInterrupted -> { file, error }
+       *
+       * We intercept the callback to track progress and map fileIdx -> _items[].batchFileIndex.
+       */
+      _uploadFiles: function() {
+        var self = this;
+        var fileObjects = this._fileObjects;
+        var totalFiles = fileObjects.length;
+
+        if (totalFiles === 0) {
+          return Promise.resolve(null);
+        }
+
+        // Calculate total bytes
+        var totalBytes = 0;
+        fileObjects.forEach(function(f) { totalBytes += f.size; });
+        this._totalBytes = totalBytes;
+        this._uploadedBytes = 0;
+        this._uploadCompletedCount = 0;
+        this._perFileLoaded = new Array(totalFiles);
+        for (var i = 0; i < totalFiles; i++) { this._perFileLoaded[i] = 0; }
+
+        this._showUploadProgress = true;
+        this._uploadProgressValue = 0;
+        this._uploadProgressMax = totalBytes || 1;
+        this._uploadProgressLabel = this.i18n('folderDrop.progress.uploading.bytes',
+          '0', this.formatSize(totalBytes));
+        this._hasInFlightFiles = true;
+        this._inFlightFiles = [];
+
+        return new Promise(function(resolve, reject) {
+          self._uploadResolve = resolve;
+          self._uploadReject = reject;
+
+          // Use UploaderBehavior's uploadFiles which delegates to the
+          // registered provider (S3 when configured, default otherwise).
+          // We listen for events via the Polymer event system.
+          // Ensure all files have a mime type. The webkitGetAsEntry() API
+          // may not populate file.type for uncommon extensions (e.g. .psd).
+          // An empty ContentType causes a server-side NPE on S3 /complete.
+          fileObjects.forEach(function(f) {
+            if (!f.type) {
+              Object.defineProperty(f, 'type', { value: 'application/octet-stream' });
+            }
+          });
+          self.uploadFiles(fileObjects);
+        });
+      },
+
+      listeners: {
+        'batchStart': '_onBatchStart',
+        'batchFinished': '_onBatchFinished',
+        'batchFailed': '_onBatchFailed',
+        'uploadInterrupted': '_onUploadInterrupted'
+      },
+
+      _onBatchStart: function(e) {
+        this._s3BatchId = e.detail.batchId;
+      },
+
+      _onBatchFinished: function(e) {
+        this._hasInFlightFiles = false;
+        this._inFlightFiles = [];
+        if (this._uploadResolve) {
+          this._uploadResolve(e.detail.batchId);
+          this._uploadResolve = null;
+          this._uploadReject = null;
+        }
+      },
+
+      _onBatchFailed: function(e) {
+        this._hasInFlightFiles = false;
+        this._inFlightFiles = [];
+        if (this._uploadReject) {
+          this._uploadReject(new Error(e.detail.error || 'Batch upload failed'));
+          this._uploadResolve = null;
+          this._uploadReject = null;
+        }
+      },
+
+      _onUploadInterrupted: function(e) {
+        var file = e.detail.file;
+        var fileName = file ? file.name : '(unknown)';
+        if (this._stopRequested) {
+          // User-initiated stop: this is expected. Log once per stop, at info level.
+          if (!this._stopAdvisoryLogged) {
+            console.info('[nuxeo-labs-folder-drop-s3] Upload stopped by user. ' +
+              'The S3 provider may log "AbortError: Upload aborted." and ' +
+              '"InputError: Upload requires a AWS client to do uploads with." — ' +
+              'these come from amazon-s3-online-storage and can be ignored.');
+            this._stopAdvisoryLogged = true;
+          }
+          console.info('[nuxeo-labs-folder-drop-s3] Upload aborted (user stop):', fileName);
+        } else {
+          console.warn('[nuxeo-labs-folder-drop-s3] Upload interrupted:',
+            fileName, e.detail.error);
+        }
+        // Mark corresponding _items entry as failed so _importFiles skips it
+        if (file && file.index !== undefined) {
+          var self = this;
+          this._items.forEach(function(item) {
+            if (!item.isFolder && item.fileIndex === file.index) {
+              item.uploadFailed = true;
+            }
+          });
+        }
+      },
+
+      /**
+       * Override UploaderBehavior._uploadStarted to track in-flight files.
+       * We call the parent implementation first, then add our tracking.
+       */
+      _uploadStarted: function(file) {
+        // Call UploaderBehavior's original implementation
+        file.progress = 0;
+        file.error = false;
+        file.complete = false;
+        this.push('files', file);
+        this.uploading = true;
+
+        // Track in-flight display
+        var idx = this.files.length - 1;
+        var list = this._inFlightFiles.slice();
+        list.push({
+          idx: idx,
+          name: file.name,
+          sizeLabel: this.formatSize(file.size),
+          pct: 0
+        });
+        this._inFlightFiles = list;
+      },
+
+      /**
+       * Override UploaderBehavior._uploadFinished to map fileIdx -> batchFileIndex.
+       */
+      _uploadFinished: function(fileIdx) {
+        // Call UploaderBehavior's original implementation
+        this._updateFile(fileIdx, {
+          progress: 100,
+          complete: true,
+          index: fileIdx
+        });
+
+        // Map the batch fileIdx to our _items array
+        // The S3 provider assigns file.index = sequential position in the
+        // files array, which matches the position in _fileObjects.
+        // So fileIdx N corresponds to _fileObjects[N] which corresponds to
+        // _items entries where item.fileIndex === N.
+        var self = this;
+        this._items.forEach(function(item) {
+          if (!item.isFolder && item.fileIndex === fileIdx) {
+            item.batchFileIndex = fileIdx;
+          }
+        });
+
+        // Update aggregate progress
+        this._uploadCompletedCount++;
+        if (this._perFileLoaded && fileIdx < this._perFileLoaded.length) {
+          this._perFileLoaded[fileIdx] = this._fileObjects[fileIdx].size;
+        }
+        this._updateAggregateProgress();
+
+        // Remove from in-flight list
+        this._inFlightFiles = this._inFlightFiles.filter(function(f) { return f.idx !== fileIdx; });
+      },
+
+      /**
+       * Override UploaderBehavior._uploadProgressUpdated to show per-file progress.
+       */
+      _uploadProgressUpdated: function(index, progress) {
+        // Call UploaderBehavior's original implementation
+        this._updateFile(index, { progress: progress });
+
+        // Update per-file loaded bytes
+        if (this._perFileLoaded && index < this._perFileLoaded.length && this._fileObjects[index]) {
+          this._perFileLoaded[index] = Math.round((progress / 100) * this._fileObjects[index].size);
+        }
+        this._updateAggregateProgress();
+
+        // Update in-flight entry
+        var pct = Math.round(progress);
+        var list = this._inFlightFiles.slice();
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].idx === index) {
+            list[i] = Object.assign({}, list[i], { pct: pct });
+            break;
+          }
+        }
+        this._inFlightFiles = list;
+      },
+
+      _updateAggregateProgress: function() {
+        var totalLoaded = 0;
+        if (this._perFileLoaded) {
+          for (var j = 0; j < this._perFileLoaded.length; j++) {
+            totalLoaded += this._perFileLoaded[j];
+          }
+        }
+        this._uploadedBytes = totalLoaded;
+        this._uploadProgressValue = totalLoaded;
+        this._uploadProgressLabel = this.i18n('folderDrop.progress.uploading.bytes',
+          this.formatSize(totalLoaded), this.formatSize(this._totalBytes));
+      }
+    });
+  </script>
+</dom-module>

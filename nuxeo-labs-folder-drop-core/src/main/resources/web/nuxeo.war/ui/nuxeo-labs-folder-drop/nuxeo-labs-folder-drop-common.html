@@ -1,0 +1,1400 @@
+<!--
+(C) Copyright 2025 Hyland (http://hyland.com/) and others.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Contributors:
+    Thibaud Arguillere
+-->
+
+<!--
+  Shared behavior for nuxeo-labs-folder-drop and nuxeo-labs-folder-drop-s3.
+  Contains all common properties, tree reading, UI helpers, doc creation logic.
+  Each concrete element must implement _uploadFiles() returning Promise<batchId>.
+-->
+<script>
+  var FolderDropCommonBehavior = {
+
+    properties: {
+      /** The current Folderish document */
+      document: Object,
+
+      showLabel: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Whether the element is displayed (button visible) */
+      display: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Flat list of all items in the tree */
+      _items: {
+        type: Array,
+        value: function() { return []; }
+      },
+
+      /** Files (actual File objects) indexed by their position in _items */
+      _fileObjects: {
+        type: Array,
+        value: function() { return []; }
+      },
+
+      _hasTree: {
+        type: Boolean,
+        value: false
+      },
+
+      _treeLines: {
+        type: Array,
+        value: function() { return []; }
+      },
+
+      /** Full list of tree nodes (all depths, regardless of collapse state).
+       *  _treeLines is derived from this by filtering out descendants of collapsed folders. */
+      _allNodes: {
+        type: Array,
+        value: function() { return []; }
+      },
+
+      /** Map of relativePath -> true for folders currently collapsed. */
+      _collapsedPaths: {
+        type: Object,
+        value: function() { return {}; }
+      },
+
+      _treeSummary: {
+        type: String,
+        value: ''
+      },
+
+      /** True once Upload is clicked, stays true until done/error */
+      _uploading: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Show "Upload" button */
+      _canUpload: {
+        type: Boolean,
+        value: false
+      },
+
+      // --- Upload phase ---
+      _showUploadProgress: {
+        type: Boolean,
+        value: false
+      },
+
+      _uploadProgressLabel: {
+        type: String,
+        value: ''
+      },
+
+      _uploadProgressValue: {
+        type: Number,
+        value: 0
+      },
+
+      _uploadProgressMax: {
+        type: Number,
+        value: 100
+      },
+
+      _uploadDone: {
+        type: Boolean,
+        value: false
+      },
+
+      // --- Resolving phase (callback chain only) ---
+      _showResolvingProgress: {
+        type: Boolean,
+        value: false
+      },
+
+      _resolvingDone: {
+        type: Boolean,
+        value: false
+      },
+
+      // --- Import / document creation phase ---
+      _showImportProgress: {
+        type: Boolean,
+        value: false
+      },
+
+      _importProgressLabel: {
+        type: String,
+        value: ''
+      },
+
+      _importProgressValue: {
+        type: Number,
+        value: 0
+      },
+
+      _importProgressMax: {
+        type: Number,
+        value: 100
+      },
+
+      _currentItemInfo: {
+        type: String,
+        value: ''
+      },
+
+      _errorMessage: {
+        type: String,
+        value: ''
+      },
+
+      _warningMessage: {
+        type: String,
+        value: ''
+      },
+
+      _successMessage: {
+        type: String,
+        value: ''
+      },
+
+      _closeButtonLabel: {
+        type: String,
+        computed: '_computeCloseLabel(_successMessage, _errorMessage, _hasTree)'
+      },
+
+      /** Whether the configuration is valid */
+      _configValid: {
+        type: Boolean,
+        value: true
+      },
+
+      /** Max number of files allowed (from config) */
+      _maxFiles: {
+        type: Number,
+        value: 500
+      },
+
+      /** Max total size in bytes allowed (from config) */
+      _maxTotalSizeInBytes: {
+        type: Number,
+        value: 2147483648
+      },
+
+      /** Whether to filter hidden files (names starting with '.') */
+      _filterHiddenFiles: {
+        type: Boolean,
+        value: true
+      },
+
+      /** Compiled RegExp objects for MIME type deny patterns */
+      _denyPatterns: {
+        type: Array,
+        value: function() { return []; }
+      },
+
+      // --- Stop / cancel ---
+      /** True between Stop click and confirmation/resume */
+      _stopRequested: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Show the inline "Stopping after current item..." hint */
+      _showStoppingHint: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Show the confirmation modal */
+      _showStopConfirm: {
+        type: Boolean,
+        value: false
+      },
+
+      /** True while the rollback REST call is in flight (modal stays open with a spinner). */
+      _rollingBack: {
+        type: Boolean,
+        value: false
+      },
+
+      /** Final neutral message after a confirmed stop */
+      _stoppedMessage: {
+        type: String,
+        value: ''
+      }
+    },
+
+    /* ===================================================================
+     * UI helpers
+     * =================================================================== */
+
+    _computeCloseLabel: function(_successMessage, _errorMessage, _hasTree) {
+      if (_successMessage || _errorMessage) {
+        return this.i18n('command.close');
+      }
+      if (_hasTree) {
+        return this.i18n('folderDrop.dialog.cancel');
+      }
+      return this.i18n('command.close');
+    },
+
+    _showDropZone: function(_uploading, _configValid) {
+      return !_uploading && _configValid;
+    },
+
+    _lineIcon: function(isFolder) {
+      return isFolder ? 'icons:folder' : 'editor:insert-drive-file';
+    },
+
+    _lineNameStyle: function(isDuplicate) {
+      return isDuplicate ? 'font-style: italic;' : '';
+    },
+
+    _duplicateLineId: function(line) {
+      var key = line.name + (line.depth > 0 ? '-'.repeat(line.depth) : '') + line.sizeLabel;
+      if (!this._duplicateLinesIds) {
+        this._duplicateLinesIds = {};
+      }
+
+      var id = this._duplicateLinesIds[key];
+      if (!id) {
+        // Must always start with a letter to be a valid querySelector
+        id = 'a-' + crypto.randomUUID();
+        this._duplicateLinesIds[key] = id;
+      }
+      return id;
+    },
+
+    _indent: function(depth) {
+      return depth * 24;
+    },
+
+    /* ===================================================================
+     * Dialog lifecycle
+     * =================================================================== */
+
+    _openDialog: function() {
+      if (this._uploading) {
+        return;
+      }
+      this._reset();
+      this._validateConfig();
+      this.$.dialog.open();
+    },
+
+    _close: function() {
+      if (this._successMessage) {
+        // Refresh the current view after successful import
+        this.fire('document-updated');
+        this.fire('navigate', { doc: this.document });
+      } else if (this._stoppedMessage && this._createdCount > 0) {
+        // After a confirmed stop, refresh so the user sees the partial result.
+        this.fire('document-updated');
+        this.fire('navigate', { doc: this.document });
+      }
+      this.$.dialog.toggle();
+    },
+
+    /**
+     * Closes the stop-confirm modal and the main dialog after a confirmed stop.
+     * If keptDocsRemain is true (Stop and keep with at least one document created),
+     * also fires document-updated/navigate so the parent view refreshes.
+     */
+    _finishStopAndClose: function(keptDocsRemain) {
+      this._showStopConfirm = false;
+      this._rollingBack = false;
+      this._stoppedMessage = '';
+      if (keptDocsRemain) {
+        this.fire('document-updated');
+        this.fire('navigate', { doc: this.document });
+      }
+      if (this.$.dialog && this.$.dialog.opened) {
+        this.$.dialog.close();
+      }
+    },
+
+    /* ===================================================================
+     * Stop / cancel
+     * =================================================================== */
+
+    /**
+     * Sentinel used to short-circuit the upload chain when the user confirms Stop.
+     * Detected in _startUpload's catch and treated as a non-error abort.
+     */
+    _STOP_SENTINEL: '__FOLDER_DROP_STOP__',
+
+    /** Click handler for the Stop button. Pauses (sets the flag) and shows the confirm modal. */
+    _onStopClicked: function() {
+      if (!this._uploading || this._stopRequested) {
+        return;
+      }
+      this._stopRequested = true;
+      this._showStoppingHint = true;
+      this._showStopConfirm = true;
+    },
+
+    /**
+     * Returns a Promise that resolves immediately if no stop was requested,
+     * otherwise waits for the user's choice in the confirmation modal:
+     *   - Resume  -> resolves
+     *   - Stop    -> rejects with the STOP sentinel (with optional rollback flag)
+     * Insert one call at the start of every per-item async step.
+     */
+    _awaitResume: function() {
+      if (!this._stopRequested) {
+        return Promise.resolve();
+      }
+      var self = this;
+      // Modal is already shown by _onStopClicked; just wait for the user.
+      return new Promise(function(resolve, reject) {
+        self._stopResolve = resolve;
+        self._stopReject = reject;
+      });
+    },
+
+    /** Confirm modal: user chose to resume. */
+    _onConfirmStopResume: function() {
+      this._showStopConfirm = false;
+      this._showStoppingHint = false;
+      this._stopRequested = false;
+      var resolve = this._stopResolve;
+      this._stopResolve = null;
+      this._stopReject = null;
+      if (resolve) {
+        resolve();
+      }
+    },
+
+    /** Confirm modal: user chose to stop and KEEP whatever was already created. */
+    _onConfirmStopKeep: function() {
+      this._showStopConfirm = false;
+      this._stopShouldRollback = false;
+      var reject = this._stopReject;
+      this._stopResolve = null;
+      this._stopReject = null;
+      if (reject) {
+        reject(new Error(this._STOP_SENTINEL));
+      }
+    },
+
+    /**
+     * Confirm modal: user chose to stop AND permanently delete what was created so far.
+     * Top-level UUIDs are sent to FolderDrop.RollbackImport which hard-deletes them
+     * (NOT trash). Nuxeo cascades to children automatically.
+     */
+    _onConfirmStopDelete: function() {
+      // Keep the modal open and switch it to a "deleting..." indeterminate state.
+      // _rollingBack is cleared by _rollbackImport() when the server call completes.
+      this._rollingBack = true;
+      this._stopShouldRollback = true;
+      var reject = this._stopReject;
+      this._stopResolve = null;
+      this._stopReject = null;
+      if (reject) {
+        reject(new Error(this._STOP_SENTINEL));
+      }
+    },
+
+    /**
+     * Calls FolderDrop.RollbackImport with the top-level created UUIDs.
+     * Returns a Promise that always resolves (rollback failures are logged, not raised
+     * to the user, since the user already chose to stop).
+     */
+    _rollbackImport: function() {
+      var self = this;
+      var ids = (this._topLevelCreatedIds || []).filter(Boolean);
+      if (ids.length === 0) {
+        self._rollingBack = false;
+        self._showStopConfirm = false;
+        return Promise.resolve();
+      }
+      var op = this.$.rollbackImportOp;
+      op.params = {
+        parentId: this.document.uid,
+        ids: ids.join(',')
+      };
+      op.input = undefined;
+      self._rollingBack = true;
+      return op.execute().catch(function(err) {
+        console.warn('[nuxeo-labs-folder-drop] Rollback failed:', err);
+      }).then(function() {
+        self._rollingBack = false;
+        self._showStopConfirm = false;
+      });
+    },
+
+    /** True while Stop is allowed (used by the templates). */
+    _showStopButton: function(_uploading, _stopRequested) {
+      return _uploading;
+    },
+
+    /** Body text for the confirmation modal. */
+    _stopConfirmBody: function(_createdCount) {
+      var n = this._createdCount || 0;
+      if (n > 0) {
+        return this.i18n('folderDrop.dialog.confirmStop.bodyImport', n.toString());
+      }
+      return this.i18n('folderDrop.dialog.confirmStop.bodyUpload');
+    },
+
+    /** Whether to show the "delete what was created" button (only if anything was created). */
+    _canRollback: function(_createdCount) {
+      return (this._createdCount || 0) > 0;
+    },
+
+    /** Label for the "stop and keep" button: differs depending on whether any document was created. */
+    _stopKeepLabel: function(_createdCount) {
+      if ((this._createdCount || 0) > 0) {
+        return this.i18n('folderDrop.dialog.confirmStop.stopKeep');
+      }
+      return this.i18n('folderDrop.dialog.confirmStop.cancelUpload');
+    },
+
+    _reset: function() {
+      this._items = [];
+      this._fileObjects = [];
+      this._hasTree = false;
+      this._treeLines = [];
+      this._allNodes = [];
+      this._collapsedPaths = {};
+      this._treeSummary = '';
+      this._uploading = false;
+      this._canUpload = false;
+      this._showUploadProgress = false;
+      this._uploadProgressLabel = '';
+      this._uploadProgressValue = 0;
+      this._uploadProgressMax = 100;
+      this._uploadDone = false;
+      this._showResolvingProgress = false;
+      this._resolvingDone = false;
+      this._showImportProgress = false;
+      this._importProgressLabel = '';
+      this._importProgressValue = 0;
+      this._importProgressMax = 100;
+      this._currentItemInfo = '';
+      this._errorMessage = '';
+      this._warningMessage = '';
+      this._duplicateNames = {};
+      this._duplicateLinesIds = {};
+      this._successMessage = '';
+      this._configValid = true;
+      this._maxFiles = 500;
+      this._maxTotalSizeInBytes = 2147483648;
+      this._filterHiddenFiles = true;
+      this._denyPatterns = [];
+      this._batchId = null;
+      this._stopRequested = false;
+      this._showStoppingHint = false;
+      this._showStopConfirm = false;
+      this._rollingBack = false;
+      this._stoppedMessage = '';
+      this._stopResolve = null;
+      this._stopReject = null;
+      this._topLevelCreatedIds = [];
+      // Allow concrete elements to add their own reset logic
+      if (typeof this._resetUploader === 'function') {
+        this._resetUploader();
+      }
+    },
+
+    /* ===================================================================
+     * Configuration validation
+     * =================================================================== */
+
+    _validateConfig: function() {
+      var config = Nuxeo.UI && Nuxeo.UI.config;
+      var rawMaxFiles = config && config.get ? config.get('folderDrop.maxFiles', '500') : '500';
+      var rawMaxSize = config && config.get ? config.get('folderDrop.maxTotalSizeInBytes', '2147483648') : '2147483648';
+
+      var maxFiles = parseInt(rawMaxFiles, 10);
+      var maxSize = parseInt(rawMaxSize, 10);
+
+      if (isNaN(maxFiles) || maxFiles <= 0 || isNaN(maxSize) || maxSize <= 0) {
+        this._configValid = false;
+        this._errorMessage = this.i18n('folderDrop.error.invalidConfig');
+        return;
+      }
+
+      this._maxFiles = maxFiles;
+      this._maxTotalSizeInBytes = maxSize;
+
+      // Filter hidden files config
+      var rawFilterHidden = config && config.get ? config.get('folderDrop.filterHiddenFiles', 'true') : 'true';
+      this._filterHiddenFiles = rawFilterHidden !== 'false';
+
+      // MIME type deny patterns
+      var rawDenyPatterns = config && config.get ? config.get('folderDrop.mimeTypeDenyPatterns', '') : '';
+      this._denyPatterns = [];
+      if (rawDenyPatterns) {
+        var parts = rawDenyPatterns.split(',');
+        for (var i = 0; i < parts.length; i++) {
+          var trimmed = parts[i].trim();
+          if (trimmed) {
+            try {
+              this._denyPatterns.push(new RegExp('^' + trimmed + '$'));
+            } catch (e) {
+              console.error('[nuxeo-labs-folder-drop] Invalid MIME type deny pattern: ' + trimmed, e);
+              this._configValid = false;
+              this._errorMessage = this.i18n('folderDrop.error.invalidConfig');
+              return;
+            }
+          }
+        }
+      }
+
+      this._configValid = true;
+    },
+
+    /* ===================================================================
+     * Drag & drop handlers
+     * =================================================================== */
+
+    _onDragOver: function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var dropZone = this.shadowRoot.querySelector('#dropZone');
+      if (dropZone) {
+        dropZone.classList.add('dragover');
+      }
+    },
+
+    _onDragLeave: function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var dropZone = this.shadowRoot.querySelector('#dropZone');
+      if (dropZone) {
+        dropZone.classList.remove('dragover');
+      }
+    },
+
+    _onDrop: function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var dropZone = this.shadowRoot.querySelector('#dropZone');
+      if (dropZone) {
+        dropZone.classList.remove('dragover');
+      }
+
+      this._errorMessage = '';
+      this._warningMessage = '';
+      this._successMessage = '';
+
+      var dataTransfer = e.dataTransfer;
+      if (!dataTransfer || !dataTransfer.items) {
+        this._errorMessage = this.i18n('folderDrop.error.noItems');
+        return;
+      }
+
+      var entries = [];
+      for (var i = 0; i < dataTransfer.items.length; i++) {
+        var item = dataTransfer.items[i];
+        var entry = item.getAsEntry ? item.getAsEntry() :
+                    (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null);
+        if (entry) {
+          entries.push(entry);
+        }
+      }
+
+      if (entries.length === 0) {
+        this._errorMessage = this.i18n('folderDrop.error.noFolders');
+        return;
+      }
+
+      // Check that at least one entry is a directory
+      var hasDirectory = entries.some(function(e) { return e.isDirectory; });
+      if (!hasDirectory) {
+        this._errorMessage = this.i18n('folderDrop.error.noFolders');
+        return;
+      }
+
+      var self = this;
+
+      this._readEntriesRecursively(entries).then(function(result) {
+        self._items = result.items;
+        self._fileObjects = result.files;
+
+        // Check limits
+        var fileCount = result.files.length;
+        var totalSize = 0;
+        result.files.forEach(function(f) { totalSize += f.size; });
+
+        if (fileCount > self._maxFiles) {
+          self._buildTreePreview();
+          self._hasTree = true;
+          self._errorMessage = self.i18n('folderDrop.error.tooManyFiles',
+            fileCount.toString(), self._maxFiles.toString());
+          return;
+        }
+        if (totalSize > self._maxTotalSizeInBytes) {
+          self._buildTreePreview();
+          self._hasTree = true;
+          self._errorMessage = self.i18n('folderDrop.error.totalSizeTooLarge',
+            self.formatSize(totalSize), self.formatSize(self._maxTotalSizeInBytes));
+          return;
+        }
+
+        // Check for duplicate titles at the target level, then build tree preview
+        self._checkDuplicates().then(function() {
+          self._buildTreePreview();
+          self._hasTree = true;
+          self._canUpload = true;
+        }).catch(function(err) {
+          console.warn('[nuxeo-labs-folder-drop] Duplicate check failed:', err);
+          // Don't block upload if the check fails - just skip the warning
+          self._buildTreePreview();
+          self._hasTree = true;
+          self._canUpload = true;
+        });
+      }).catch(function(err) {
+        console.error('[nuxeo-labs-folder-drop] Failed to read folder contents:', err);
+        self._errorMessage = self.i18n('folderDrop.error.readFailed');
+      });
+    },
+
+    /* ===================================================================
+     * Duplicate check
+     * =================================================================== */
+
+    _checkDuplicates: function() {
+      var self = this;
+      this._duplicateNames = {};
+
+      // Collect names of top-level items (relativePath has no '/')
+      var topLevelNames = [];
+      this._items.forEach(function(item) {
+        if (item.relativePath.indexOf('/') === -1) {
+          topLevelNames.push(item.name);
+        }
+      });
+
+      if (topLevelNames.length === 0) {
+        return Promise.resolve();
+      }
+
+      // De-duplicate names
+      var uniqueNames = [];
+      var seen = {};
+      topLevelNames.forEach(function(name) {
+        if (!seen[name]) {
+          seen[name] = true;
+          uniqueNames.push(name);
+        }
+      });
+
+      // Build NXQL IN clause with escaped single quotes
+      var escaped = uniqueNames.map(function(n) {
+        return "'" + n.replace(/'/g, "\\'") + "'";
+      });
+      var query = "SELECT * FROM Document WHERE ecm:parentId = '" + this.document.uid +
+        "' AND dc:title IN (" + escaped.join(', ') +
+        ") AND ecm:isVersion = 0 AND ecm:isProxy = 0 AND ecm:isTrashed = 0";
+
+      // pageSize: 40 — we only need to know if duplicates exist; a small sample
+      // is enough to display in the warning, no need to fetch the full result set.
+      return this.$.nx.request().then(function(request) {
+        return request.path('/search/execute')
+          .queryParams({ query: query, pageSize: 40 })
+          .get();
+      }).then(function(response) {
+        if (response && response.resultsCount > 0) {
+          // Collect matching titles
+          var matchingTitles = [];
+          var titleSeen = {};
+          response.entries.forEach(function(entry) {
+            var title = entry.properties && entry.properties['dc:title'];
+            if (title && !titleSeen[title]) {
+              titleSeen[title] = true;
+              matchingTitles.push(title);
+            }
+          });
+          if (matchingTitles.length > 0) {
+            // Store duplicate names for tree preview icons
+            matchingTitles.forEach(function(t) { self._duplicateNames[t] = true; });
+            self._warningMessage = self.i18n('folderDrop.warning.duplicates',
+              matchingTitles.join(', '));
+          }
+        }
+      });
+    },
+
+    /* ===================================================================
+     * Recursive entry reading
+     * =================================================================== */
+
+    _readEntriesRecursively: function(entries) {
+      var items = [];
+      var files = [];
+      var self = this;
+
+      function readEntry(entry, parentPath) {
+        return new Promise(function(resolve, reject) {
+          // Skip hidden files/folders (names starting with '.') if configured
+          if (self._filterHiddenFiles && entry.name.charAt(0) === '.') {
+            resolve();
+            return;
+          }
+          // Reject entry names containing path traversal sequences
+          if (entry.name === '..' || entry.name.indexOf('/') !== -1 || entry.name.indexOf('\\') !== -1) {
+            reject(new Error('Invalid entry name: ' + entry.name));
+            return;
+          }
+          var relativePath = parentPath ? parentPath + '/' + entry.name : entry.name;
+
+          if (entry.isFile) {
+            entry.file(function(file) {
+              var fileMimeType = file.type || 'application/octet-stream';
+              // Check MIME type deny patterns
+              if (self._denyPatterns.length > 0) {
+                for (var p = 0; p < self._denyPatterns.length; p++) {
+                  if (self._denyPatterns[p].test(fileMimeType)) {
+                    // Skip denied file
+                    resolve();
+                    return;
+                  }
+                }
+              }
+              var fileIndex = files.length;
+              files.push(file);
+              items.push({
+                name: entry.name,
+                relativePath: relativePath,
+                isFolder: false,
+                mimeType: fileMimeType,
+                size: file.size,
+                fileIndex: fileIndex
+              });
+              resolve();
+            }, reject);
+          } else if (entry.isDirectory) {
+            items.push({
+              name: entry.name,
+              relativePath: relativePath,
+              isFolder: true,
+              mimeType: '',
+              size: 0
+            });
+
+            var reader = entry.createReader();
+            self._readAllDirectoryEntries(reader).then(function(childEntries) {
+              var promises = childEntries.map(function(child) {
+                return readEntry(child, relativePath);
+              });
+              return Promise.all(promises);
+            }).then(resolve).catch(reject);
+          } else {
+            resolve();
+          }
+        });
+      }
+
+      var promises = entries.map(function(entry) {
+        return readEntry(entry, '');
+      });
+
+      return Promise.all(promises).then(function() {
+        return { items: items, files: files };
+      });
+    },
+
+    _readAllDirectoryEntries: function(reader) {
+      var allEntries = [];
+
+      function readBatch() {
+        return new Promise(function(resolve, reject) {
+          reader.readEntries(function(entries) {
+            if (entries.length === 0) {
+              resolve(allEntries);
+            } else {
+              allEntries = allEntries.concat(Array.from(entries));
+              readBatch().then(resolve).catch(reject);
+            }
+          }, reject);
+        });
+      }
+
+      return readBatch();
+    },
+
+    /* ===================================================================
+     * Tree preview
+     * =================================================================== */
+
+    _buildTreePreview: function() {
+      var folders = 0;
+      var fileCount = 0;
+      var totalSize = 0;
+      var allNodes = [];
+
+      // Sort items by relativePath for display
+      var sorted = this._items.slice().sort(function(a, b) {
+        return a.relativePath.localeCompare(b.relativePath);
+      });
+
+      // First pass: figure out which folders have at least one child (any depth)
+      var folderHasChildren = {};
+      sorted.forEach(function(item) {
+        if (item.relativePath.indexOf('/') === -1) {
+          return;
+        }
+        var parts = item.relativePath.split('/');
+        // Every ancestor folder path has this item as a descendant
+        for (var i = 1; i < parts.length; i++) {
+          var ancestor = parts.slice(0, i).join('/');
+          folderHasChildren[ancestor] = true;
+        }
+      });
+
+      var self = this;
+      var duplicateNames = this._duplicateNames || {};
+      sorted.forEach(function(item) {
+        var depth = item.relativePath.split('/').length - 1;
+        var isDuplicate = depth === 0 && !!duplicateNames[item.name];
+        if (item.isFolder) {
+          allNodes.push({
+            name: item.name,
+            relativePath: item.relativePath,
+            isFolder: true,
+            hasChildren: !!folderHasChildren[item.relativePath],
+            isDuplicate: isDuplicate,
+            depth: depth,
+            sizeLabel: ''
+          });
+          folders++;
+        } else {
+          allNodes.push({
+            name: item.name,
+            relativePath: item.relativePath,
+            isFolder: false,
+            hasChildren: false,
+            isDuplicate: isDuplicate,
+            depth: depth,
+            sizeLabel: '(' + self.formatSize(item.size) + ')'
+          });
+          fileCount++;
+          totalSize += item.size || 0;
+        }
+      });
+
+      // Reset collapse state on a fresh build
+      this._collapsedPaths = {};
+      this._allNodes = allNodes;
+      this._treeLines = this._computeTreeLines(allNodes, this._collapsedPaths);
+      this._treeSummary = this.i18n('folderDrop.summary',
+        folders.toString(), fileCount.toString(), this.formatSize(totalSize));
+    },
+
+    /**
+     * Derive the visible tree lines from _allNodes given the current collapsed set.
+     * A node is hidden if any of its ancestor folder paths is in collapsedPaths.
+     */
+    _computeTreeLines: function(allNodes, collapsedPaths) {
+      if (!allNodes || !allNodes.length) {
+        return [];
+      }
+      var hasCollapsed = false;
+      for (var k in collapsedPaths) {
+        if (collapsedPaths.hasOwnProperty(k)) { hasCollapsed = true; break; }
+      }
+      if (!hasCollapsed) {
+        return allNodes.slice();
+      }
+      var visible = [];
+      allNodes.forEach(function(node) {
+        if (node.relativePath.indexOf('/') === -1) {
+          visible.push(node);
+          return;
+        }
+        var parts = node.relativePath.split('/');
+        var hidden = false;
+        // Check every ancestor path (exclude the node itself: parts.length - 1)
+        for (var i = 1; i < parts.length; i++) {
+          var ancestor = parts.slice(0, i).join('/');
+          if (collapsedPaths[ancestor]) {
+            hidden = true;
+            break;
+          }
+        }
+        if (!hidden) {
+          visible.push(node);
+        }
+      });
+      return visible;
+    },
+
+    /**
+     * Returns the chevron icon name for a folder row based on its collapsed state.
+     * The unused _collapsedPaths argument is declared so Polymer re-evaluates the
+     * binding whenever the collapsed map is reassigned.
+     */
+    _chevronIcon: function(relativePath, _collapsedPaths) {
+      return (this._collapsedPaths && this._collapsedPaths[relativePath])
+        ? 'icons:chevron-right'
+        : 'icons:expand-more';
+    },
+
+    /**
+     * True when this folder row should display a clickable chevron.
+     * Files and empty folders show a spacer instead (for alignment).
+     */
+    _showChevron: function(line) {
+      return !!(line && line.isFolder && line.hasChildren);
+    },
+
+    /**
+     * Toggle a folder's collapsed state. No-op during upload to keep the
+     * progress UI stable while items are being created.
+     * Alt/Option-click applies the new state recursively to all descendant
+     * folders.
+     */
+    _onToggleFolder: function(e) {
+      if (this._uploading) {
+        return;
+      }
+      var line = e.model && e.model.line;
+      if (!line || !line.isFolder || !line.hasChildren) {
+        return;
+      }
+      var altKey = !!((e.detail && e.detail.sourceEvent && e.detail.sourceEvent.altKey)
+                      || e.altKey);
+      // Reassign the object so Polymer notifies dependent bindings
+      var next = {};
+      var current = this._collapsedPaths || {};
+      for (var k in current) {
+        if (current.hasOwnProperty(k)) { next[k] = current[k]; }
+      }
+      var path = line.relativePath;
+      var targetCollapsed = !next[path];
+      if (!altKey) {
+        if (targetCollapsed) {
+          next[path] = true;
+        } else {
+          delete next[path];
+        }
+      } else {
+        // Alt-click: apply target state to this folder + all descendant folders
+        var prefix = path + '/';
+        this._allNodes.forEach(function(node) {
+          if (!node.isFolder || !node.hasChildren) {
+            return;
+          }
+          if (node.relativePath === path || node.relativePath.indexOf(prefix) === 0) {
+            if (targetCollapsed) {
+              next[node.relativePath] = true;
+            } else {
+              delete next[node.relativePath];
+            }
+          }
+        });
+      }
+      this._collapsedPaths = next;
+      this._treeLines = this._computeTreeLines(this._allNodes, next);
+    },
+
+    /* ===================================================================
+     * Upload orchestration
+     * =================================================================== */
+
+    /**
+     * Called when the user clicks "Upload".
+     * Concrete elements must implement _uploadFiles() returning Promise<batchId>.
+     */
+    _startUpload: function() {
+      this._canUpload = false;
+      this._uploading = true;
+      this._errorMessage = '';
+      this._batchId = null;
+      this._createdCount = 0;
+      this._currentItemPath = '';
+      this._topLevelCreatedIds = [];
+      this._stopRequested = false;
+      this._showStoppingHint = false;
+      this._showStopConfirm = false;
+      this._stoppedMessage = '';
+      this._stopShouldRollback = false;
+      this._rollingBack = false;
+
+      var self = this;
+
+      // Compute dropped counts from _items
+      var droppedFolderCount = 0;
+      var droppedFileCount = 0;
+      this._items.forEach(function(item) {
+        if (item.isFolder) {
+          droppedFolderCount++;
+        } else {
+          droppedFileCount++;
+        }
+      });
+      this._droppedFolderCount = droppedFolderCount;
+      this._droppedFileCount = droppedFileCount;
+
+      // Step 1: Upload all files to a batch
+      this._uploadFiles().then(function(batchId) {
+        self._batchId = batchId;
+        self._showUploadProgress = false;
+        self._uploadDone = true;
+
+        // Step 2: Resolve types (always called; the server decides if callback applies)
+        return self._resolveTypes(batchId);
+      }).then(function(result) {
+        self._showResolvingProgress = false;
+        if (result.hadCallback) {
+          self._resolvingDone = true;
+        }
+
+        // Step 3: Create folders
+        return self._createFolders(result.resolvedItems, result.batchId);
+      }).then(function(result) {
+        // Step 4: Import files
+        return self._importFiles(result.resolvedItems, result.batchId, result.pathToId);
+      }).then(function() {
+        self._showImportProgress = false;
+        self._uploading = false;
+        self._successMessage = self.i18n('folderDrop.success');
+        // Notify success (best-effort)
+        self._notifyDone('success', null, null);
+        // Clean up the batch
+        if (self._batchId) {
+          self._deleteBatch(self._batchId);
+        }
+      }).catch(function(err) {
+        var isStop = err && err.message === self._STOP_SENTINEL;
+        if (!isStop) {
+          console.error('[nuxeo-labs-folder-drop] Import failed:', err);
+        }
+        self._showUploadProgress = false;
+        self._showResolvingProgress = false;
+        self._showImportProgress = false;
+        self._uploading = false;
+        self._showStoppingHint = false;
+
+        if (isStop) {
+          // User-confirmed stop. Optionally roll back, then clean up the batch and notify.
+          var rollbackPromise = self._stopShouldRollback ? self._rollbackImport() : Promise.resolve();
+          rollbackPromise.then(function() {
+            var rolledBack = self._stopShouldRollback;
+            if (rolledBack) {
+              self._createdCount = 0;
+            }
+            var keptCount = self._createdCount || 0;
+            self._notifyDone('aborted', null, rolledBack ? 'rolled-back' : 'kept');
+            if (self._batchId) {
+              self._deleteBatch(self._batchId);
+            }
+            // Surface a brief toast then close everything (confirm modal + main dialog).
+            self.fire('notify', { message: self.i18n('folderDrop.stopped', keptCount.toString()) });
+            self._finishStopAndClose(keptCount > 0 && !rolledBack);
+          });
+          return;
+        }
+
+        // Determine status: partial if some docs were created, failure otherwise
+        var status = self._createdCount > 0 ? 'partial' : 'failure';
+        // Extract the server error message from the response body if available
+        var errorPromise;
+        if (err.response && typeof err.response.json === 'function') {
+          errorPromise = err.response.json().then(function(body) {
+            return body && body.message ? body.message : (err.message || String(err));
+          }).catch(function() {
+            return err.message || String(err);
+          });
+        } else {
+          errorPromise = Promise.resolve(err.message || String(err));
+        }
+        errorPromise.then(function(failedMessage) {
+          var firstLine = failedMessage.split('\n')[0];
+          if (firstLine.length > 200) {
+            firstLine = firstLine.substring(0, 200) + '...';
+          }
+          self._errorMessage = self.i18n('folderDrop.error.importFailed') + ': ' + firstLine;
+          // Notify failure (best-effort)
+          self._notifyDone(status, self._currentItemPath, failedMessage);
+        });
+        // Clean up the batch if it was created
+        if (self._batchId) {
+          self._deleteBatch(self._batchId);
+        }
+      });
+    },
+
+    /* ===================================================================
+     * Server-side operations
+     * =================================================================== */
+
+    /**
+     * Calls FolderDrop.ResolveTypes to get doc types for all items.
+     * Returns { resolvedItems, batchId, hadCallback }.
+     */
+    _resolveTypes: function(batchId) {
+      var self = this;
+
+      // Build the tree JSON (strip fileIndex, keep batchFileIndex)
+      var treeItems = this._items.map(function(item) {
+        var obj = {
+          name: item.name,
+          relativePath: item.relativePath,
+          isFolder: item.isFolder,
+          mimeType: item.mimeType || '',
+          size: item.size || 0
+        };
+        if (!item.isFolder && item.batchFileIndex !== undefined) {
+          obj.batchFileIndex = item.batchFileIndex;
+        }
+        return obj;
+      });
+
+      // Show resolving spinner (indeterminate)
+      this._showResolvingProgress = true;
+
+      var op = this.$.resolveTypesOp;
+      op.params = {
+        parentPath: this.document.path,
+        treeJson: JSON.stringify(treeItems)
+      };
+      op.input = undefined;
+
+      return op.execute().then(function(response) {
+        if (response && typeof response.text === 'function') {
+          return response.text();
+        }
+        return typeof response === 'string' ? response : JSON.stringify(response);
+      }).then(function(text) {
+        var resolvedItems = JSON.parse(text);
+        // Determine if callback was used
+        var hadCallback = resolvedItems.some(function(item) {
+          return !item.isFolder && item.docType !== null && item.docType !== undefined;
+        });
+        return { resolvedItems: resolvedItems, batchId: batchId, hadCallback: hadCallback };
+      });
+    },
+
+    /**
+     * Creates folder documents top-down.
+     * Maintains a map of relativePath -> document UUID for use by _importFiles.
+     */
+    _createFolders: function(resolvedItems, batchId) {
+      var self = this;
+      var folders = resolvedItems.filter(function(item) { return item.isFolder; });
+      var files = resolvedItems.filter(function(item) { return !item.isFolder; });
+      var totalDocs = folders.length + files.length;
+
+      // Sort by depth (top-down)
+      folders.sort(function(a, b) {
+        return a.relativePath.split('/').length - b.relativePath.split('/').length;
+      });
+
+      this._showImportProgress = true;
+      this._importProgressValue = 0;
+      this._importProgressMax = totalDocs;
+      this._importProgressLabel = this.i18n('folderDrop.progress.creatingDocs.count',
+        '0', totalDocs.toString());
+
+      // Map relativePath -> UUID for parent lookups
+      var pathToId = {};
+      pathToId[''] = this.document.uid;
+      var created = 0;
+
+      // Create folders sequentially (parent must exist before child)
+      var chain = Promise.resolve();
+      folders.forEach(function(folder) {
+        chain = chain.then(function() {
+          return self._awaitResume();
+        }).then(function() {
+          self._currentItemPath = folder.relativePath;
+          self._currentItemInfo = folder.name;
+          var parentRelPath = self._getParentRelativePath(folder.relativePath);
+          var parentId = pathToId[parentRelPath];
+          var docType = folder.docType || 'Folder';
+          var name = folder.name;
+
+          return self.$.nx.request().then(function(request) {
+            return request.path('/id/' + parentId)
+              .post({
+                body: {
+                  'entity-type': 'document',
+                  type: docType,
+                  name: name,
+                  properties: {
+                    'dc:title': name
+                  }
+                }
+              });
+          }).then(function(response) {
+            pathToId[folder.relativePath] = response.uid;
+            // Track top-level created UUIDs for potential rollback.
+            if (folder.relativePath.indexOf('/') === -1) {
+              self._topLevelCreatedIds.push(response.uid);
+            }
+            created++;
+            self._createdCount = created;
+            self._importProgressValue = created;
+            self._importProgressLabel = self.i18n('folderDrop.progress.creatingDocs.count',
+              created.toString(), totalDocs.toString());
+          });
+        });
+      });
+
+      return chain.then(function() {
+        return { resolvedItems: resolvedItems, batchId: batchId, created: created, totalDocs: totalDocs, pathToId: pathToId };
+      });
+    },
+
+    /**
+     * Imports files. If docType is null, uses FileManager.Import.
+     * Otherwise creates explicitly with the given type.
+     */
+    _importFiles: function(resolvedItems, batchId, pathToId) {
+      var self = this;
+      var files = resolvedItems.filter(function(item) { return !item.isFolder && !item.uploadFailed; });
+      var folders = resolvedItems.filter(function(item) { return item.isFolder; });
+      var totalDocs = folders.length + files.length;
+
+      if (files.length === 0 || !batchId) {
+        return Promise.resolve();
+      }
+
+      var created = folders.length; // folders already done
+
+      // Import files sequentially
+      var chain = Promise.resolve();
+      files.forEach(function(file) {
+        chain = chain.then(function() {
+          return self._awaitResume();
+        }).then(function() {
+          self._currentItemPath = file.relativePath;
+          self._currentItemInfo = file.name + ' (' + self.formatSize(file.size) + ')';
+          var parentRelPath = self._getParentRelativePath(file.relativePath);
+          var parentId = pathToId[parentRelPath];
+          var fileIdx = file.batchFileIndex !== undefined ? file.batchFileIndex : '0';
+          var isTopLevel = file.relativePath.indexOf('/') === -1;
+
+          var promise;
+          if (file.docType) {
+            // Explicit creation with specified doc type
+            promise = self.$.nx.request().then(function(request) {
+              return request.path('/id/' + parentId)
+                .post({
+                  body: {
+                    'entity-type': 'document',
+                    type: file.docType,
+                    name: file.name,
+                    properties: {
+                      'dc:title': file.name,
+                      'file:content': {
+                        'upload-batch': batchId,
+                        'upload-fileId': String(fileIdx)
+                      }
+                    }
+                  },
+                  headers: {
+                    'X-Batch-No-Drop': 'true'
+                  }
+                });
+            });
+          } else {
+            // Use FileManager.Import (default)
+            promise = self.$.nx.request().then(function(request) {
+              return request.path('/upload/' + batchId + '/' + fileIdx + '/execute/FileManager.Import')
+                .post({
+                  body: {
+                    context: {
+                      currentDocument: parentId
+                    },
+                    params: {
+                      context: {
+                        currentDocument: parentId
+                      }
+                    }
+                  },
+                  headers: {
+                    'X-Batch-No-Drop': 'true'
+                  }
+                });
+            });
+          }
+
+          return promise.then(function(response) {
+            // Track top-level created file UUIDs for potential rollback.
+            // FileManager.Import returns the created document; explicit creation
+            // returns the document model directly. Both expose `uid`.
+            if (isTopLevel && response && response.uid) {
+              self._topLevelCreatedIds.push(response.uid);
+            }
+            created++;
+            self._createdCount = created;
+            self._importProgressValue = created;
+            self._importProgressLabel = self.i18n('folderDrop.progress.creatingDocs.count',
+              created.toString(), totalDocs.toString());
+          });
+        });
+      });
+
+      return chain;
+    },
+
+    /* ===================================================================
+     * Utilities
+     * =================================================================== */
+
+    /**
+     * Fires the folderDropImportDone event via the FolderDrop.NotifyDone operation.
+     */
+    _notifyDone: function(status, failedItem, failedMessage) {
+      var op = this.$.notifyDoneOp;
+      op.params = {
+        parentId: this.document.uid,
+        status: status,
+        droppedFolderCount: this._droppedFolderCount || 0,
+        droppedFileCount: this._droppedFileCount || 0,
+        createdCount: this._createdCount || 0
+      };
+      if (failedItem) {
+        op.params.failedItem = failedItem;
+      }
+      if (failedMessage) {
+        op.params.failedMessage = failedMessage;
+      }
+      op.input = undefined;
+      op.execute().catch(function(err) {
+        console.warn('[nuxeo-labs-folder-drop] Failed to send import done notification:', err);
+      });
+    },
+
+    /**
+     * Deletes a batch to clean up uploaded files on error.
+     */
+    _deleteBatch: function(batchId) {
+      this.$.nx.request().then(function(request) {
+        request.path('/upload/' + batchId)
+          .delete()
+          .catch(function(e) {
+            console.warn('[nuxeo-labs-folder-drop] Failed to clean up batch:', e);
+          });
+      });
+    },
+
+    /**
+     * Given a relativePath like "folder1/subfolder/file.txt",
+     * returns the parent's relativePath, e.g., "folder1/subfolder".
+     * Returns '' for top-level items.
+     */
+    _getParentRelativePath: function(relativePath) {
+      var parts = relativePath.split('/');
+      parts.pop();
+      return parts.join('/');
+    }
+  };
+</script>

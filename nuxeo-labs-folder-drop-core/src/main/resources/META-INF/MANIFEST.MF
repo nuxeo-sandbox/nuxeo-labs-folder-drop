@@ -1,0 +1,13 @@
+Bundle-ActivationPolicy: lazy
+Bundle-ClassPath: .
+Manifest-Version: 1.0
+Bundle-Vendor: nuxeo.labs.folderdrop
+Bundle-Version: 1.0.0
+Bundle-Name: nuxeo-labs-folder-drop-core
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: nuxeo.labs.folderdrop.nuxeo-labs-folder-drop-core;singleton=true
+Nuxeo-Component: OSGI-INF/folderdrop-service.xml,
+ OSGI-INF/folderdrop-operations.xml,
+ OSGI-INF/folderdrop-contrib.xml,
+ OSGI-INF/folderdrop-properties.xml
+

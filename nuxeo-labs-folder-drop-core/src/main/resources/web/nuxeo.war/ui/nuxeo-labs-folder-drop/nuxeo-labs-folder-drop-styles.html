@@ -1,0 +1,232 @@
+<!--
+(C) Copyright 2025 Hyland (http://hyland.com/) and others.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Contributors:
+    Thibaud Arguillere
+-->
+
+<!--
+  Shared CSS styles for nuxeo-labs-folder-drop and nuxeo-labs-folder-drop-s3.
+  Both elements include this module via <style include="nuxeo-labs-folder-drop-styles">.
+-->
+<dom-module id="nuxeo-labs-folder-drop-styles">
+  <template>
+    <style>
+      :host {
+        display: inline-block;
+      }
+
+      :host([hidden]) {
+        display: none !important;
+      }
+
+      nuxeo-dialog {
+        --nuxeo-dialog: {
+          top: 50px;
+          bottom: auto;
+          width: 50%;
+          max-width: 700px;
+        };
+      }
+
+      #dropZone {
+        min-height: 80px;
+        border: 2px dashed var(--nuxeo-border, #aaa);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        margin: 16px 0;
+        transition: border-color 0.2s, background-color 0.2s;
+        background: var(--nuxeo-page-background, #fafafa);
+      }
+
+      #dropZone.dragover {
+        border-color: var(--nuxeo-primary-color, #0066ff);
+        background-color: var(--nuxeo-light-background, #e8f0fe);
+      }
+
+      #dropZone iron-icon {
+        --iron-icon-height: 48px;
+        --iron-icon-width: 48px;
+        color: var(--nuxeo-text-light, #939caa);
+        margin-bottom: 8px;
+      }
+
+      .drop-label {
+        color: var(--nuxeo-text-light, #939caa);
+        font-size: 14px;
+      }
+
+      .progress-section {
+        margin: 16px 0;
+      }
+
+      .progress-label {
+        font-size: 13px;
+        color: var(--nuxeo-text-default, #3a3a54);
+        margin-bottom: 4px;
+      }
+
+      paper-progress {
+        width: 100%;
+        --paper-progress-active-color: var(--nuxeo-primary-color, #0066ff);
+      }
+
+      .progress-item-info {
+        font-size: 12px;
+        color: var(--nuxeo-text-light, #939caa);
+        margin-bottom: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tree-preview {
+        max-height: 250px;
+        overflow-y: auto;
+        font-size: 12px;
+        background: var(--nuxeo-box, #fff);
+        border: 1px solid var(--nuxeo-border, #e3e3e3);
+        border-radius: 4px;
+        padding: 8px 12px;
+        margin: 8px 0;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .tree-line {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 0;
+      }
+
+      .tree-line iron-icon {
+        --iron-icon-height: 18px;
+        --iron-icon-width: 18px;
+        color: var(--nuxeo-text-light, #939caa);
+        flex-shrink: 0;
+      }
+
+      .tree-line iron-icon.tree-chevron {
+        --iron-icon-height: 16px;
+        --iron-icon-width: 16px;
+        cursor: pointer;
+        color: var(--nuxeo-text, #5e5e5e);
+      }
+
+      .tree-line iron-icon.tree-chevron:hover {
+        color: var(--nuxeo-primary-color, #0066ff);
+      }
+
+      .tree-chevron-spacer {
+        display: inline-block;
+        width: 16px;
+        flex-shrink: 0;
+      }
+
+      .tree-line-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tree-line-size {
+        color: var(--nuxeo-text-light, #939caa);
+        white-space: nowrap;
+        margin-left: 4px;
+      }
+
+      .duplicate-icon {
+        --iron-icon-height: 16px;
+        --iron-icon-width: 16px;
+        color: yellow;
+        flex-shrink: 0;
+        margin-left: 4px;
+      }
+
+      .error-message {
+        color: var(--nuxeo-warn-text, #d32f2f);
+        font-size: 13px;
+        margin: 8px 0;
+      }
+
+      .success-message {
+        color: var(--nuxeo-validated, #42a100);
+        font-size: 13px;
+        margin: 8px 0;
+      }
+
+      .warning-message {
+        color: var(--nuxeo-warn-text, #f57c00);
+        font-size: 13px;
+        margin: 8px 0;
+        padding: 8px 12px;
+        border-radius: 4px;
+      }
+
+      .summary {
+        font-size: 13px;
+        color: var(--nuxeo-text-default, #3a3a54);
+        margin: 4px 0;
+      }
+
+      .phase-completed {
+        font-size: 12px;
+        color: var(--nuxeo-validated, #42a100);
+        margin: 4px 0;
+      }
+
+      .phase-completed iron-icon {
+        --iron-icon-height: 16px;
+        --iron-icon-width: 16px;
+        color: var(--nuxeo-validated, #42a100);
+        margin-right: 4px;
+      }
+
+      .current-file-label {
+        margin-top: 8px;
+        font-style: italic;
+        color: var(--nuxeo-text-light, #939caa);
+      }
+
+      .buttons {
+        margin-top: 0;
+        margin-bottom: 10px;
+      }
+
+      .stop-confirm-buttons {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .stop-confirm-buttons paper-button {
+        margin: 16px 0 0 0;
+        white-space: nowrap;
+      }
+
+      .stop-confirm-progress {
+        width: 100%;
+        margin-top: 12px;
+      }
+    </style>
+  </template>
+</dom-module>

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<component name="nuxeo.labs.folderdrop.FolderDropService" version="1.0">
+
+  <implementation class="nuxeo.labs.folderdrop.FolderDropServiceImpl" />
+
+  <service>
+    <provide interface="nuxeo.labs.folderdrop.FolderDropService" />
+  </service>
+
+  <extension-point name="configuration">
+    <object class="nuxeo.labs.folderdrop.FolderDropDescriptor" />
+  </extension-point>
+
+  <!-- Default configuration: no callback chain, filter hidden files, no deny patterns -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <callbackChain></callbackChain>
+      <mimeTypeDenyPatterns>${org.nuxeo.web.ui.folderDrop.mimeTypeDenyPatterns:=}</mimeTypeDenyPatterns>
+      <filterHiddenFiles>${org.nuxeo.web.ui.folderDrop.filterHiddenFiles:=true}</filterHiddenFiles>
+    </configuration>
+  </extension>
+
+</component>

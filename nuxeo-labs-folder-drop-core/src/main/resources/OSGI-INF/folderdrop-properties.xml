@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.properties">
+
+  <extension target="org.nuxeo.runtime.ConfigurationService" point="configuration">
+    <property name="org.nuxeo.web.ui.folderDrop.maxFiles">500</property>
+    <property name="org.nuxeo.web.ui.folderDrop.maxTotalSizeInBytes">2147483648</property>
+    <property name="org.nuxeo.web.ui.folderDrop.mimeTypeDenyPatterns"></property>
+    <property name="org.nuxeo.web.ui.folderDrop.filterHiddenFiles">true</property>
+  </extension>
+
+</component>

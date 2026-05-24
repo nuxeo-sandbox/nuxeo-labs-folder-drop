@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.test.callback">
+
+  <require>nuxeo.labs.folderdrop.FolderDropService</require>
+
+  <!-- Override default config to set a callback chain -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <callbackChain>javascript.testFolderDropCallback</callbackChain>
+    </configuration>
+  </extension>
+
+  <!-- Test chain: returns different doc types based on isFolder and mimeType -->
+  <extension target="org.nuxeo.automation.scripting.internals.AutomationScriptingComponent" point="operation">
+    <scriptedOperation id="javascript.testFolderDropCallback">
+      <inputType>document</inputType>
+      <outputType>document</outputType>
+      <category>javascript</category>
+      <param name="name" type="string"/>
+      <param name="is_folder" type="boolean"/>
+      <param name="mime_type" type="string"/>
+      <param name="size" type="long"/>
+      <param name="relative_path" type="string"/>
+      <description>Test callback chain for FolderDrop</description>
+      <script><![CDATA[function run(input, params) {
+
+        var result = {};
+
+        if (params.is_folder) {
+          result.docType = "Workspace";
+        } else {
+          var mime = params.mime_type || "";
+          if (mime.indexOf("image/") === 0) {
+            result.docType = "Picture";
+          } else if (mime.indexOf("text/") === 0) {
+            result.docType = "Note";
+          } else {
+            result.docType = "File";
+          }
+        }
+
+        ctx.FolderDrop_Result = JSON.stringify(result);
+
+        return input;
+      }]]></script>
+    </scriptedOperation>
+  </extension>
+
+</component>

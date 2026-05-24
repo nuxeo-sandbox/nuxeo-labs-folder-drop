@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="nuxeo.labs.folderdrop.test.callback.partial">
+
+  <require>nuxeo.labs.folderdrop.FolderDropService</require>
+
+  <!-- Override default config to set a callback chain -->
+  <extension target="nuxeo.labs.folderdrop.FolderDropService" point="configuration">
+    <configuration>
+      <callbackChain>javascript.testFolderDropPartialCallback</callbackChain>
+    </configuration>
+  </extension>
+
+  <!-- Test chain: only sets docType for folders, leaves files with no result -->
+  <extension target="org.nuxeo.automation.scripting.internals.AutomationScriptingComponent" point="operation">
+    <scriptedOperation id="javascript.testFolderDropPartialCallback">
+      <inputType>document</inputType>
+      <outputType>document</outputType>
+      <category>javascript</category>
+      <param name="name" type="string"/>
+      <param name="is_folder" type="boolean"/>
+      <param name="mime_type" type="string"/>
+      <param name="size" type="long"/>
+      <param name="relative_path" type="string"/>
+      <description>Test partial callback chain for FolderDrop - only handles folders</description>
+      <script><![CDATA[function run(input, params) {
+
+        if (params.is_folder) {
+          ctx.FolderDrop_Result = JSON.stringify({"docType": "OrderedFolder"});
+        }
+        // For files, we do NOT set FolderDrop_Result → defaults will apply
+
+        return input;
+      }]]></script>
+    </scriptedOperation>
+  </extension>
+
+</component>

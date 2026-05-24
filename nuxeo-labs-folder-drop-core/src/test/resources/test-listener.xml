@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<component name="nuxeo.labs.folderdrop.test.listener">
+
+  <extension target="org.nuxeo.ecm.core.event.EventServiceComponent" point="listener">
+    <listener name="testFolderDropListener"
+              class="nuxeo.labs.folderdrop.TestFolderDropListener">
+      <event>folderDropImportDone</event>
+    </listener>
+  </extension>
+
+</component>
