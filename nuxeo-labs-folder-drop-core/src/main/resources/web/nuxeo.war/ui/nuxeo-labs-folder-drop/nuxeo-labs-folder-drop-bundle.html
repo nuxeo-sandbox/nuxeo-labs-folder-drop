@@ -40,10 +40,10 @@ Contributors:
 <dom-module id="nuxeo-labs-folder-drop-button">
   <template>
     <template is="dom-if" if="[[_useS3]]">
-      <nuxeo-labs-folder-drop-s3 document="[[document]]" display></nuxeo-labs-folder-drop-s3>
+      <nuxeo-labs-folder-drop-s3 document="[[document]]" show-label="[[showLabel]]" display></nuxeo-labs-folder-drop-s3>
     </template>
     <template is="dom-if" if="[[_useServer]]">
-      <nuxeo-labs-folder-drop document="[[document]]" display></nuxeo-labs-folder-drop>
+      <nuxeo-labs-folder-drop document="[[document]]" show-label="[[showLabel]]" display></nuxeo-labs-folder-drop>
     </template>
   </template>
 
@@ -53,6 +53,7 @@ Contributors:
 
       properties: {
         document: { type: Object },
+        showLabel: { type: Boolean, value: false },
         _useServer: { type: Boolean, value: false },
         _useS3: { type: Boolean, value: false }
       },
