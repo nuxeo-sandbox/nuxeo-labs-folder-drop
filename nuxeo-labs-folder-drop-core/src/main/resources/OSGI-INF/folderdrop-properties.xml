@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component name="nuxeo.labs.folderdrop.properties">
 
+  <!-- These proepertis start with "org.nuxeo.web.ui", which means they are available in Nuxeo Web UI.-->
   <extension target="org.nuxeo.runtime.ConfigurationService" point="configuration">
     <property name="org.nuxeo.web.ui.folderDrop.maxFiles">500</property>
     <property name="org.nuxeo.web.ui.folderDrop.maxTotalSizeInBytes">2147483648</property>
