@@ -90,9 +90,23 @@ When the [Nuxeo S3 Direct Upload](https://doc.nuxeo.com/nxdoc/amazon-s3-direct-u
 - **Real progress tracking** — An aggregate bytes-based progress bar (e.g., "Uploading files... (12.5 MB / 45.2 MB)") replaces the file-count progress bar
 - **Per-file progress** — A scrollable list below the aggregate bar shows each in-flight file with its own percentage progress bar
 
-#### Enabling the S3 Element
+#### Choosing Which Element Is Active
 
-The plugin ships two upload elements. By default, the standard element (`nuxeo-labs-folder-drop`) is active. To switch to the S3-optimized element (`nuxeo-labs-folder-drop-s3`), override the slot contribution in your Nuxeo Studio project (in Designer, in the custom bundle):
+The plugin ships two upload elements. Which one renders is driven by the `org.nuxeo.web.ui.folderDrop.uploadProvider` runtime property:
+
+| Value | Behavior |
+|---|---|
+| `auto` *(default)* | Renders `nuxeo-labs-folder-drop-s3` when `s3.useDirectUpload=true`, otherwise renders `nuxeo-labs-folder-drop`. The check is synchronous and reuses the same flag the Nuxeo Web UI S3 addon uses to set its default upload provider, so the two always agree. |
+| `server` | Always render `nuxeo-labs-folder-drop` (server-side upload), even when S3 direct upload is configured. |
+| `s3` | Always render `nuxeo-labs-folder-drop-s3`. Only meaningful when S3 direct upload is actually configured server-side. |
+
+Set it like any other property, e.g. in `nuxeo.conf`:
+
+```
+org.nuxeo.web.ui.folderDrop.uploadProvider=auto
+```
+
+**Bypassing the wrapper.** If you need full control (for example to force one element on a per-document-type basis), override the slot contribution in your Nuxeo Studio project and reference one element directly:
 
 ```html
 <nuxeo-slot-content name="folderDropAction" slot="DOCUMENT_ACTIONS" order="40">
@@ -107,7 +121,7 @@ The plugin ships two upload elements. By default, the standard element (`nuxeo-l
 ```
 
 > [!IMPORTANT]
-> The `display` attribute **must** be present on the element you want active, and **absent** on the one you want hidden. Never use `display="false"` — in Polymer 2, attribute presence = true, absence = false.
+> When you bypass the wrapper, the `display` attribute **must** be present on the element you want active, and **absent** on the one you want hidden. Never use `display="false"` — in Polymer 2, attribute presence = true, absence = false.
 
 ### Duplicate Handling
 
@@ -178,6 +192,7 @@ The plugin enforces limits on the number of files and total size that can be upl
 | `org.nuxeo.web.ui.folderDrop.maxTotalSizeInBytes` | `2147483648` (2 GB) | Maximum total size in bytes allowed per drop |
 | `org.nuxeo.web.ui.folderDrop.filterHiddenFiles` | `true` | Filter files/folders whose name starts with `.` (e.g., `.DS_Store`, `.git`) |
 | `org.nuxeo.web.ui.folderDrop.mimeTypeDenyPatterns` | *(empty)* | Comma-separated list of regex patterns to deny files by MIME type |
+| `org.nuxeo.web.ui.folderDrop.uploadProvider` | `auto` | `auto` \| `server` \| `s3`. Which upload element to display. `auto` reads `Nuxeo.UI.config.s3.useDirectUpload` and picks the matching element. See [Choosing Which Element Is Active](#choosing-which-element-is-active). |
 
 Example `nuxeo.conf`:
 
@@ -186,6 +201,7 @@ org.nuxeo.web.ui.folderDrop.maxFiles=1000
 org.nuxeo.web.ui.folderDrop.maxTotalSizeInBytes=5368709120
 org.nuxeo.web.ui.folderDrop.filterHiddenFiles=true
 org.nuxeo.web.ui.folderDrop.mimeTypeDenyPatterns=video/.*,application/x-executable
+org.nuxeo.web.ui.folderDrop.uploadProvider=auto
 ```
 
 These properties can also be overridden via an XML contribution to `org.nuxeo.runtime.ConfigurationService`.
@@ -194,7 +210,7 @@ These properties can also be overridden via an XML contribution to `org.nuxeo.ru
 
 When the **default** (non-S3) upload element is in use, every dropped file transits through the Nuxeo server: the browser uploads each blob to a server-side **TransientStore** (disk-backed by default), and the import phase reads from there to create the documents. Concurrent drops by multiple users can therefore consume noticeable disk space and I/O on the Nuxeo node hosting the upload, until the transient entries are consumed or expire.
 
-If you expect concurrent folder drops or large total volumes, prefer the **S3 direct upload** variant (see [Enabling the S3 Element](#enabling-the-s3-element)): blobs go straight from the browser to S3, leaving the Nuxeo server out of the data path. The standard guardrails (`maxFiles`, `maxTotalSizeInBytes`) still apply per drop in both modes.
+If you expect concurrent folder drops or large total volumes, prefer the **S3 direct upload** variant (see [Choosing Which Element Is Active](#choosing-which-element-is-active)): blobs go straight from the browser to S3, leaving the Nuxeo server out of the data path. The standard guardrails (`maxFiles`, `maxTotalSizeInBytes`) still apply per drop in both modes.
 
 ## Localization
 
