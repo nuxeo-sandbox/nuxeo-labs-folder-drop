@@ -55,18 +55,14 @@ Once the import completes, a success message is displayed. Clicking **Close** re
 
 ### Stopping an Upload
 
-While the upload is in progress (during file upload, type resolution, folder creation or file import) a **Stop upload** button is shown next to Cancel/Close. Clicking it:
+While the upload is in progress (during file upload, type resolution, folder creation or file import) a **Stop upload** button is shown next to Cancel/Close. Clicking it pauses the workflow as soon as the current item finishes (a "Stopping after the current item finishes..." hint is shown), and pens a confirmation dialog with 2-3 choices, depending on the context of the calcel request:
 
-1. Pauses the workflow as soon as the current item finishes (a "Stopping after the current item finishes..." hint is shown), and
-
-<img src="README-Images/04-StopRequested.png" alt="Stop requested" width="500">
-
-2. Opens a confirmation dialog with three choices:
    - **Resume upload** — clears the stop request and the import continues from where it paused.
-   - **Stop and keep imported items** — aborts the import. Any folder or file already created in Nuxeo **remains in the system**. The temporary upload batch on the server is cleaned up.
+   - **Cancel upload** *(only shown if at no document was created)*
+   - **Stop and keep imported items** *(only shown if at least one document was already created)* — aborts the import. Any folder or file already created in Nuxeo **remains in the system**. The temporary upload batch on the server is cleaned up.
    - **Stop and permanently delete imported items** *(only shown if at least one document was already created)* — aborts the import **and** permanently removes (NOT trash) every top-level item that was created so far. Nuxeo cascades the deletion to all children automatically. This is **irreversible**. Implemented by the `FolderDrop.RollbackImport` operation — see [Server-Side API](#server-side-api).
 
-<img src="README-Images/08-StopConfirm.png" alt="Stop confirmation dialog" width="500">
+<img src="README-Images/08-StopImport.png" alt="Stop confirmation dialog" width="700">
 
 Notes:
 
