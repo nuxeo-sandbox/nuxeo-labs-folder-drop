@@ -17,25 +17,78 @@ Contributors:
     Thibaud Arguillere
 -->
 
-<!-- Import the components -->
+<!-- Import both upload elements -->
 <link rel="import" href="nuxeo-labs-folder-drop.html">
 <link rel="import" href="nuxeo-labs-folder-drop-s3.html">
 
 <!--
+  Wrapper element that picks the right upload element to render based on the
+  runtime property org.nuxeo.web.ui.folderDrop.uploadProvider:
+
+    server : nuxeo-labs-folder-drop          (server-side upload, works everywhere)
+    s3     : nuxeo-labs-folder-drop-s3       (S3 direct upload)
+    auto   : pick s3 if Nuxeo.UI.config.s3.useDirectUpload is truthy, otherwise
+             pick server. This is the same flag the Nuxeo Web UI S3 addon uses
+             to set its default upload provider (see
+             nuxeo-web-ui/addons/amazon-s3-online-storage/index.js), so the
+             choice always matches the actual upload provider.
+
+  To bypass this wrapper entirely (e.g. force a specific element regardless of
+  the runtime property), override the slot contribution below in Nuxeo Studio
+  with a direct reference to nuxeo-labs-folder-drop or nuxeo-labs-folder-drop-s3.
+-->
+<dom-module id="nuxeo-labs-folder-drop-button">
+  <template>
+    <template is="dom-if" if="[[_useS3]]">
+      <nuxeo-labs-folder-drop-s3 document="[[document]]" display></nuxeo-labs-folder-drop-s3>
+    </template>
+    <template is="dom-if" if="[[_useServer]]">
+      <nuxeo-labs-folder-drop document="[[document]]" display></nuxeo-labs-folder-drop>
+    </template>
+  </template>
+
+  <script>
+    Polymer({
+      is: 'nuxeo-labs-folder-drop-button',
+
+      properties: {
+        document: { type: Object },
+        _useServer: { type: Boolean, value: false },
+        _useS3: { type: Boolean, value: false }
+      },
+
+      attached: function() {
+        var config = Nuxeo.UI && Nuxeo.UI.config;
+        var mode = (config && config.get) ? config.get('folderDrop.uploadProvider', 'auto') : 'auto';
+        mode = (mode || 'auto').toString().toLowerCase();
+
+        if (mode === 's3') {
+          this._useS3 = true;
+        } else if (mode === 'server') {
+          this._useServer = true;
+        } else {
+          // auto: mirror the same flag the Web UI S3 addon checks
+          var s3 = (config && config.get) ? config.get('s3.useDirectUpload', false) : false;
+          if (s3) {
+            this._useS3 = true;
+          } else {
+            this._useServer = true;
+          }
+        }
+      }
+    });
+  </script>
+</dom-module>
+
+<!--
   Register the "Drop Folder..." button in document actions.
   Only visible on Folderish documents.
-
-  By default, only the standard element is displayed (uses server-side upload).
-  To use S3 direct upload instead, override this contribution in Nuxeo Studio:
-    - Remove "display" from nuxeo-labs-folder-drop
-    - Add "display" to nuxeo-labs-folder-drop-s3
 -->
 <nuxeo-slot-content name="folderDropAction" slot="DOCUMENT_ACTIONS" order="40">
   <template>
     <nuxeo-filter document="[[document]]" facet="Folderish">
       <template>
-        <nuxeo-labs-folder-drop document="[[document]]" display></nuxeo-labs-folder-drop>
-        <nuxeo-labs-folder-drop-s3 document="[[document]]"></nuxeo-labs-folder-drop-s3>
+        <nuxeo-labs-folder-drop-button document="[[document]]"></nuxeo-labs-folder-drop-button>
       </template>
     </nuxeo-filter>
   </template>

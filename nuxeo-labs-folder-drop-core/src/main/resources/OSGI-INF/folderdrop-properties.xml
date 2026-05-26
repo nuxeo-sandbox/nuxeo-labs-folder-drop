@@ -6,6 +6,16 @@
     <property name="org.nuxeo.web.ui.folderDrop.maxTotalSizeInBytes">2147483648</property>
     <property name="org.nuxeo.web.ui.folderDrop.mimeTypeDenyPatterns"></property>
     <property name="org.nuxeo.web.ui.folderDrop.filterHiddenFiles">true</property>
+    <!--
+      Which upload element to display in the document actions slot.
+        server : always use server-side upload (nuxeo-labs-folder-drop)
+        s3     : always use S3 direct upload (nuxeo-labs-folder-drop-s3)
+        auto   : pick s3 if Nuxeo.UI.config.s3.useDirectUpload is true,
+                 otherwise use server. This is the same flag the Nuxeo
+                 Web UI S3 addon uses to set its default upload provider,
+                 so the choice always matches the configured provider.
+    -->
+    <property name="org.nuxeo.web.ui.folderDrop.uploadProvider">auto</property>
   </extension>
 
 </component>
