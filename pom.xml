@@ -9,7 +9,7 @@
 
   <groupId>nuxeo.labs.folderdrop</groupId>
   <artifactId>nuxeo-labs-folder-drop-parent</artifactId>
-  <version>2025.3.0-SNAPSHOT</version>
+  <version>2025.4.0-SNAPSHOT</version>
   <name>Nuxeo Labs Folder Drop</name>
   <description>Drag-and-drop folder import for Nuxeo Web UI, preserving hierarchy</description>
   <packaging>pom</packaging>
